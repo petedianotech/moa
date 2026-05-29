@@ -1,0 +1,6 @@
+{
+  "name": "moa",
+  "description": "Your massive intelligence, made personal. Real-time assistant with screen-lock support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
