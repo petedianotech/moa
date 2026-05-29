@@ -1,0 +1,88 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ "main", "master", "developer" ]
+  pull_request:
+    branches: [ "main", "master", "developer" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & Package APK
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Source Code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v4
+      with:
+        gradle-version: 8.10.2
+
+    - name: Create Env File from Template
+      run: |
+        if [ -f .env.example ]; then
+          cp .env.example .env
+        else
+          echo "GEMINI_API_KEY=placeholder" > .env
+        fi
+        # If user has set GEMINI_API_KEY in GitHub Secrets, inject it
+        if [ ! -z "${{ secrets.GEMINI_API_KEY }}" ]; then
+          echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" > .env
+        fi
+
+    - name: Restore Debug Keystore
+      run: |
+        if [ -f debug.keystore.base64 ]; then
+          base64 -d debug.keystore.base64 > debug.keystore
+        fi
+
+    - name: Generate Self-Signed Release Keystore
+      run: |
+        # Only generate a fallback my-upload-key.jks if it does not exist already
+        if [ ! -f my-upload-key.jks ]; then
+          echo "Generating fallback self-signed signing keystore..."
+          keytool -genkey -v -keystore my-upload-key.jks \
+            -alias upload -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=moa, OU=AIStudio, O=AIStudio, L=Global, S=Global, C=US" \
+            -storepass android -keypass android
+          
+          # Set default passwords for the fallback keystore if not provided in env
+          if [ -z "$STORE_PASSWORD" ]; then
+            echo "STORE_PASSWORD=android" >> $GITHUB_ENV
+          fi
+          if [ -z "$KEY_PASSWORD" ]; then
+            echo "KEY_PASSWORD=android" >> $GITHUB_ENV
+          fi
+        fi
+
+    - name: Build with Gradle
+      env:
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        STORE_PASSWORD: ${{ env.STORE_PASSWORD || secrets.STORE_PASSWORD }}
+        KEY_PASSWORD: ${{ env.KEY_PASSWORD || secrets.KEY_PASSWORD }}
+        KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
+      run: gradle assemble
+
+    - name: Find and Organize APKs
+      run: |
+        mkdir -p build-apks
+        # Copy release and debug APKs to a central directory
+        find app/build/outputs/apk/ -name "*.apk" -exec cp {} build-apks/ \;
+        echo "Listing organized APKs:"
+        ls -la build-apks
+
+    - name: Upload APK Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: moa-android-apks
+        path: build-apks/*.apk
+        retention-days: 7
